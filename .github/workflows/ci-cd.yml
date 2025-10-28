@@ -16,25 +16,25 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Setup NuGet
-        uses: NuGet/setup-nuget@v1.1.1
+        uses: NuGet/setup-nuget@v1
 
       - name: Restore NuGet Packages
         run: nuget restore TestProject1.sln
 
       - name: Setup MSBuild
-        uses: microsoft/setup-msbuild@v1.1
+        uses: microsoft/setup-msbuild@v1
 
       - name: Build Solution (Release)
         run: msbuild TestProject1.sln /p:Configuration=Release
 
-      - name: Publish Web App (FileSystem)
-        run: msbuild TestProject1.sln /p:WebPublishMethod=FileSystem /p:PublishUrl=".\publish" /p:Configuration=Release
+      - name: Publish Web App
+        run: msbuild "TestProject1\TestProject1.csproj" /p:Configuration=Release /p:WebPublishMethod=FileSystem /p:PublishUrl="publish"
 
-      - name: Upload Artifact
+      - name: Upload Published Artifact
         uses: actions/upload-artifact@v4
         with:
           name: webapp
-          path: publish/
+          path: publish
 
 
   deploy_qa:
