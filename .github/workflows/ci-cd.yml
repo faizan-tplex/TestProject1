@@ -1,59 +1,51 @@
-name: CI-CD Test on IIS
+name: CI-CD Test on IIS (.NET Framework - QA Only)
 
 on:
   push:
     branches: [ master, main ]
-  pull_request:
-    branches: [ master, main ]
   workflow_dispatch:
 
 jobs:
+
   build_test:
-    name: Build & Test
-    runs-on: ubuntu-latest
+    name: Build (.NET Framework)
+    runs-on: windows-latest
 
     steps:
-      - name: Checkout
+      - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: |
-            6.0.x
-            8.0.x
+      - name: Setup NuGet
+        uses: NuGet/setup-nuget@v1.1.1
 
-      - name: Restore
-        run: dotnet restore
+      - name: Restore NuGet Packages
+        run: nuget restore TestProject1.sln
 
-      - name: Build
-        run: dotnet build --configuration Release --no-restore
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v1.1
 
-      - name: Test
-        run: dotnet test --configuration Release --no-build --verbosity normal
+      - name: Build Solution (Release)
+        run: msbuild TestProject1.sln /p:Configuration=Release
 
-      - name: Publish (self-contained site binaries)
-        run: |
-          dotnet publish TestProject1/TestProject1.csproj \
-            --configuration Release \
-            --output ./publish
+      - name: Publish Web App (FileSystem)
+        run: msbuild TestProject1.sln /p:WebPublishMethod=FileSystem /p:PublishUrl=".\publish" /p:Configuration=Release
 
-      - name: Upload artifact
+      - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
           name: webapp
           path: publish/
 
+
   deploy_qa:
-    name: Deploy to QA (IIS)
+    name: Deploy to QA Server (Local IIS)
     needs: build_test
-    # This runs on your QA server runner
-    runs-on: [self-hosted, windows, x64, qa]
+    runs-on: [self-hosted, windows, x64, qa]   # Your machine's runner label
     environment:
       name: qa
-      url: http://your-qa-url/   # optional
+
     steps:
-      - name: Download artifact
+      - name: Download Build Artifact
         uses: actions/download-artifact@v4
         with:
           name: webapp
@@ -62,74 +54,29 @@ jobs:
       - name: Deploy to IIS (QA)
         shell: pwsh
         env:
-          SITE_PATH: ${{ vars.QA_SITE_PATH }}
-          SITE_NAME: ${{ vars.SITE_NAME_QA }}
+          SITE_PATH: "D:\New folder"
+          SITE_NAME: "CICDTestSite"
         run: |
           Import-Module WebAdministration
 
+          Write-Host "Creating backup before deploy..."
           $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
-          $backupRoot = Join-Path $env:TEMP "deploy-backups"
-          New-Item -ItemType Directory -Force -Path $backupRoot | Out-Null
-          $backup = Join-Path $backupRoot "QA-$timestamp"
+          $backup = Join-Path (Split-Path $env:SITE_PATH) "backup-$timestamp"
           New-Item -ItemType Directory -Force -Path $backup | Out-Null
+          if (Test-Path $env:SITE_PATH) {
+            Copy-Item "$env:SITE_PATH\*" $backup -Recurse -Force -ErrorAction SilentlyContinue
+          }
 
           Write-Host "Stopping IIS site $env:SITE_NAME"
           & $env:windir\system32\inetsrv\appcmd stop site "$env:SITE_NAME"
 
-          if (Test-Path $env:SITE_PATH) {
-            Copy-Item "$env:SITE_PATH\*" $backup -Recurse -Force -ErrorAction SilentlyContinue
-            Remove-Item "$env:SITE_PATH\*" -Recurse -Force -ErrorAction SilentlyContinue
-          } else {
-            New-Item -ItemType Directory -Force -Path $env:SITE_PATH | Out-Null
-          }
+          Write-Host "Removing existing files..."
+          Remove-Item "$env:SITE_PATH\*" -Recurse -Force -ErrorAction SilentlyContinue
 
-          Write-Host "Copying new build to $env:SITE_PATH"
+          Write-Host "Publishing new build files..."
           Copy-Item "webapp\*" $env:SITE_PATH -Recurse -Force
 
           Write-Host "Starting IIS site $env:SITE_NAME"
           & $env:windir\system32\inetsrv\appcmd start site "$env:SITE_NAME"
 
-  deploy_uat:
-    name: Promote to UAT (IIS)
-    needs: deploy_qa
-    # This runs on your UAT server runner
-    runs-on: [self-hosted, windows, x64, uat]
-    environment:
-      name: uat
-      url: http://your-uat-url/   # optional
-    steps:
-      - name: Download artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: webapp
-          path: webapp
-
-      - name: Deploy to IIS (UAT)
-        shell: pwsh
-        env:
-          SITE_PATH: ${{ vars.UAT_SITE_PATH }}
-          SITE_NAME: ${{ vars.SITE_NAME_UAT }}
-        run: |
-          Import-Module WebAdministration
-
-          $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
-          $backupRoot = Join-Path $env:TEMP "deploy-backups"
-          New-Item -ItemType Directory -Force -Path $backupRoot | Out-Null
-          $backup = Join-Path $backupRoot "UAT-$timestamp"
-          New-Item -ItemType Directory -Force -Path $backup | Out-Null
-
-          Write-Host "Stopping IIS site $env:SITE_NAME"
-          & $env:windir\system32\inetsrv\appcmd stop site "$env:SITE_NAME"
-
-          if (Test-Path $env:SITE_PATH) {
-            Copy-Item "$env:SITE_PATH\*" $backup -Recurse -Force -ErrorAction SilentlyContinue
-            Remove-Item "$env:SITE_PATH\*" -Recurse -Force -ErrorAction SilentlyContinue
-          } else {
-            New-Item -ItemType Directory -Force -Path $env:SITE_PATH | Out-Null
-          }
-
-          Write-Host "Copying new build to $env:SITE_PATH"
-          Copy-Item "webapp\*" $env:SITE_PATH -Recurse -Force
-
-          Write-Host "Starting IIS site $env:SITE_NAME"
-          & $env:windir\system32\inetsrv\appcmd start site "$env:SITE_NAME"
+          Write-Host "✅ Deployment to QA completed successfully!"
